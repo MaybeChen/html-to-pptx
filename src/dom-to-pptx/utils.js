@@ -1,17 +1,14 @@
 // src/utils.js
 // canvas context for color normalization
 
-const PPI = 96;
 let _ctx;
-
-export const pxToInch = (px, scale = 1) => (px / PPI) * scale;
 
 function getCtx() {
   if (!_ctx) _ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
   return _ctx;
 }
 
-function getTableBorder(style, side, scale = 1) {
+function getTableBorder(style, side, scale) {
   const widthStr = style[`border${side}Width`];
   const styleStr = style[`border${side}Style`];
   const colorStr = style[`border${side}Color`];
@@ -37,7 +34,7 @@ function getTableBorder(style, side, scale = 1) {
 /**
  * Extracts native table data for PptxGenJS.
  */
-export function extractTableData(node, scale = 1) {
+export function extractTableData(node, scale) {
   const rows = [];
   const colWidths = [];
 
@@ -91,14 +88,11 @@ export function extractTableData(node, scale = 1) {
       if (style.verticalAlign === 'bottom') valign = 'bottom';
 
       const padding = getPadding(style, scale);
-      const paddingArray = Array.isArray(padding)
-        ? padding
-        : [pxToInch(padding.top, scale), pxToInch(padding.right, scale), pxToInch(padding.bottom, scale), pxToInch(padding.left, scale)];
       const margin = [
-        paddingArray[0] * 72 + vSpacePt / 2,
-        paddingArray[1] * 72 + hSpacePt / 2,
-        paddingArray[2] * 72 + vSpacePt / 2,
-        paddingArray[3] * 72 + hSpacePt / 2,
+        padding[0] * 72 + vSpacePt / 2,
+        padding[1] * 72 + hSpacePt / 2,
+        padding[2] * 72 + vSpacePt / 2,
+        padding[3] * 72 + hSpacePt / 2,
       ];
 
       const borderTop = getTableBorder(style, 'Top', scale);
@@ -180,15 +174,11 @@ function mapDashType(style) {
 /**
  * Analyzes computed border styles and determines the rendering strategy.
  */
-export function getBorderInfo(style, scale = 1) {
-  const topColor = parseColor(style.borderTopColor);
-  const rightColor = parseColor(style.borderRightColor);
-  const bottomColor = parseColor(style.borderBottomColor);
-  const leftColor = parseColor(style.borderLeftColor);
-  const top = { width: parseFloat(style.borderTopWidth) || 0, style: style.borderTopStyle, color: topColor.hex };
-  const right = { width: parseFloat(style.borderRightWidth) || 0, style: style.borderRightStyle, color: rightColor.hex };
-  const bottom = { width: parseFloat(style.borderBottomWidth) || 0, style: style.borderBottomStyle, color: bottomColor.hex };
-  const left = { width: parseFloat(style.borderLeftWidth) || 0, style: style.borderLeftStyle, color: leftColor.hex };
+export function getBorderInfo(style, scale) {
+  const top = { width: parseFloat(style.borderTopWidth) || 0, style: style.borderTopStyle, color: parseColor(style.borderTopColor).hex };
+  const right = { width: parseFloat(style.borderRightWidth) || 0, style: style.borderRightStyle, color: parseColor(style.borderRightColor).hex };
+  const bottom = { width: parseFloat(style.borderBottomWidth) || 0, style: style.borderBottomStyle, color: parseColor(style.borderBottomColor).hex };
+  const left = { width: parseFloat(style.borderLeftWidth) || 0, style: style.borderLeftStyle, color: parseColor(style.borderLeftColor).hex };
 
   const hasAnyBorder = top.width > 0 || right.width > 0 || bottom.width > 0 || left.width > 0;
   if (!hasAnyBorder) return { type: 'none' };
@@ -210,7 +200,7 @@ export function getBorderInfo(style, scale = 1) {
       options: {
         width: top.width * 0.75 * scale,
         color: top.color,
-        transparency: (1 - topColor.opacity) * 100,
+        transparency: (1 - parseColor(style.borderTopColor).opacity) * 100,
         dashType: mapDashType(top.style),
       },
     };
@@ -258,9 +248,9 @@ export function generateCustomShapeSVG(w, h, color, opacity, radii) {
   return 'data:image/svg+xml;base64,' + btoa(svg);
 }
 
-export function parseColor(str, fallback = 'FFFFFF') {
+export function parseColor(str) {
   if (!str || str === 'transparent' || str.trim?.() === 'rgba(0, 0, 0, 0)') {
-    return { hex: null, opacity: 0, color: fallback, transparency: 100 };
+    return { hex: null, opacity: 0 };
   }
 
   const ctx = getCtx();
@@ -280,7 +270,7 @@ export function parseColor(str, fallback = 'FFFFFF') {
       opacity = parseInt(hex.slice(6), 16) / 255;
       hex = hex.slice(0, 6);
     }
-    return { hex: hex.toUpperCase(), opacity, color: hex.toUpperCase(), transparency: Math.round((1 - opacity) * 100) };
+    return { hex: hex.toUpperCase(), opacity };
   }
 
   if (computed.startsWith('rgb')) {
@@ -291,7 +281,7 @@ export function parseColor(str, fallback = 'FFFFFF') {
       const b = parseInt(match[2]);
       const a = match.length > 3 ? parseFloat(match[3]) : 1;
       const hex = ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-      return { hex, opacity: a, color: hex, transparency: Math.round((1 - a) * 100) };
+      return { hex, opacity: a };
     }
   }
 
@@ -302,47 +292,29 @@ export function parseColor(str, fallback = 'FFFFFF') {
   const g = data[1];
   const b = data[2];
   const a = data[3] / 255;
-  if (a === 0) return { hex: null, opacity: 0, color: fallback, transparency: 100 };
+  if (a === 0) return { hex: null, opacity: 0 };
   const hex = ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-  return { hex, opacity: a, color: hex, transparency: Math.round((1 - a) * 100) };
+  return { hex, opacity: a };
 }
 
 export function getPadding(style, scale) {
-  if (typeof scale === 'number') {
-    const pxToIn = 1 / 96;
-    const values = [
-      (parseFloat(style.paddingTop) || 0) * pxToIn * scale,
-      (parseFloat(style.paddingRight) || 0) * pxToIn * scale,
-      (parseFloat(style.paddingBottom) || 0) * pxToIn * scale,
-      (parseFloat(style.paddingLeft) || 0) * pxToIn * scale,
-    ];
-    values.top = parseFloat(style.paddingTop) || 0;
-    values.right = parseFloat(style.paddingRight) || 0;
-    values.bottom = parseFloat(style.paddingBottom) || 0;
-    values.left = parseFloat(style.paddingLeft) || 0;
-    return values;
-  }
-  return {
-    top: parseFloat(style.paddingTop) || 0,
-    right: parseFloat(style.paddingRight) || 0,
-    bottom: parseFloat(style.paddingBottom) || 0,
-    left: parseFloat(style.paddingLeft) || 0,
-  };
+  const pxToInch = 1 / 96;
+  return [
+    (parseFloat(style.paddingTop) || 0) * pxToInch * scale,
+    (parseFloat(style.paddingRight) || 0) * pxToInch * scale,
+    (parseFloat(style.paddingBottom) || 0) * pxToInch * scale,
+    (parseFloat(style.paddingLeft) || 0) * pxToInch * scale,
+  ];
 }
 
-export function getSoftEdges(filterStr, scale = 1) {
+export function getSoftEdges(filterStr, scale) {
   if (!filterStr || filterStr === 'none') return null;
   const match = filterStr.match(/blur\(([\d.]+)px\)/);
   if (match) return parseFloat(match[1]) * 0.75 * scale;
   return null;
 }
 
-export function getTextStyle(style, scale = 1, includeMargins = true, inheritedOpacity = 1) {
-  if (typeof includeMargins === 'number') {
-    inheritedOpacity = includeMargins;
-    includeMargins = true;
-  }
-
+export function getTextStyle(style, scale, includeMargins = true, inheritedOpacity = 1) {
   let colorObj = parseColor(style.color);
   let opacity = colorObj.opacity * inheritedOpacity;
   const elOpacity = parseFloat(style.opacity);
@@ -355,7 +327,7 @@ export function getTextStyle(style, scale = 1, includeMargins = true, inheritedO
   }
 
   let lineSpacing = null;
-  const fontSizePx = parseFloat(style.fontSize) || 16;
+  const fontSizePx = parseFloat(style.fontSize);
   const lhStr = style.lineHeight;
   if (lhStr && lhStr !== 'normal') {
     let lhPx = parseFloat(lhStr);
@@ -373,7 +345,6 @@ export function getTextStyle(style, scale = 1, includeMargins = true, inheritedO
   }
 
   const transparency = Math.round((1 - opacity) * 100);
-  const bg = parseColor(style.backgroundColor);
   return {
     color: colorObj.hex || '000000',
     ...(transparency > 0 && { transparency }),
@@ -381,11 +352,11 @@ export function getTextStyle(style, scale = 1, includeMargins = true, inheritedO
     fontSize: Math.floor(fontSizePx * 0.75 * scale * 10) / 10,
     bold: parseInt(style.fontWeight) >= 600,
     italic: style.fontStyle === 'italic',
-    underline: style.textDecoration?.includes('underline') || style.textDecorationLine?.includes('underline') || false,
+    underline: style.textDecoration.includes('underline'),
     ...(lineSpacing && { lineSpacing }),
     ...(paraSpaceBefore > 0 && { paraSpaceBefore }),
     ...(paraSpaceAfter > 0 && { paraSpaceAfter }),
-    ...(bg.hex ? { highlight: bg.hex } : {}),
+    ...(parseColor(style.backgroundColor).hex ? { highlight: parseColor(style.backgroundColor).hex } : {}),
     ...(style.letterSpacing && style.letterSpacing !== 'normal'
       ? { charSpacing: parseFloat(style.letterSpacing) * 0.75 * scale }
       : {}),
@@ -435,8 +406,8 @@ export function isTextContainer(node) {
 
 export function getRotation(transformStr) {
   if (!transformStr || transformStr === 'none') return 0;
-  const values = transformStr.split('(')[1]?.split(')')[0]?.split(',');
-  if (!values || values.length < 4) return 0;
+  const values = transformStr.split('(')[1].split(')')[0].split(',');
+  if (values.length < 4) return 0;
   const a = parseFloat(values[0]);
   const b = parseFloat(values[1]);
   return Math.round(Math.atan2(b, a) * (180 / Math.PI));
@@ -543,8 +514,7 @@ function inlineSvgStyles(source, target) {
   }
 }
 
-export function getVisibleShadow(shadowStr, scale = 1) {
-  if (shadowStr && typeof shadowStr === 'object') shadowStr = shadowStr.boxShadow;
+export function getVisibleShadow(shadowStr, scale) {
   if (!shadowStr || shadowStr === 'none') return null;
   const shadows = shadowStr.split(/,(?![^()]*\))/);
   for (let s of shadows) {
@@ -565,7 +535,6 @@ export function getVisibleShadow(shadowStr, scale = 1) {
         angle,
         blur: blur * 0.75 * scale,
         offset: distance * 0.75 * scale,
-        distance: distance * 0.75 * scale,
         color: colorObj.hex || '000000',
         opacity: colorObj.opacity,
       };
@@ -783,12 +752,6 @@ export async function getAutoDetectedFonts(usedFamilies) {
 }
 
 export function collectTextParts(node, parentStyle, scale, activeHyperlink = null, isRoot = true, inheritedOpacity = 1) {
-  if (typeof parentStyle === 'number') {
-    inheritedOpacity = scale ?? 1;
-    scale = parentStyle;
-    parentStyle = node.nodeType === 1 ? window.getComputedStyle(node) : null;
-  }
-
   const parts = [];
   let hyperlink = activeHyperlink;
   if (!hyperlink && node.nodeType === 1) {
