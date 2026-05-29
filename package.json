@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "description": "Convert all HTML files in a directory into a complete PowerPoint presentation.",
   "type": "module",
-  "main": "src/scripts/converts.js",
+  "main": "src/scripts/convert.js",
   "bin": {
-    "html-to-pptx": "src/scripts/converts.js"
+    "html-to-pptx": "src/scripts/convert.js"
   },
   "scripts": {
-    "start": "node src/scripts/converts.js",
+    "start": "node src/scripts/convert.js",
     "test": "node --test"
   },
   "keywords": [

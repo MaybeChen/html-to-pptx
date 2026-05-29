@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { buildExportOptions } from '../src/scripts/convert.js';
-import { collectHtmlFiles, createMergedHtmlFile } from '../src/scripts/converts.js';
+import { buildExportOptions, collectHtmlFiles, createMergedHtmlFile } from '../src/scripts/convert.js';
 import { collectMergedStylesheetHrefs, DEFAULT_FONT_CSS_URLS } from '../src/scripts/merge-html-assets.js';
 
 test('buildExportOptions applies defaults', () => {
