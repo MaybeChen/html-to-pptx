@@ -20,6 +20,12 @@ Or, after linking/installing the package:
 html-to-pptx <input-dir> <output-file>
 ```
 
+## Core conversion module
+
+The vendored browser-side conversion core lives in `dom-to-pptx/src`. It exposes `exportToPptx(target, options)`, which accepts a DOM element, selector, or array of elements/selectors and generates one PPTX slide per root element.
+
+This module is the integration point for the upcoming directory-level HTML-to-PPTX workflow.
+
 ## Development
 
 ```bash
