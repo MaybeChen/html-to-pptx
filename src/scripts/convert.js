@@ -9,6 +9,11 @@ import { waitForFontsReady } from './wait-for-fonts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(__dirname, '..')
+const packageRoot = resolve(projectRoot, '..')
+const domToPptxDir = resolve(projectRoot, 'dom-to-pptx')
+const nodeModulesDir = resolve(packageRoot, 'node_modules')
+const DOM_TO_PPTX_ROUTE = '/__dom_to_pptx__/'
+const DOM_TO_PPTX_VENDOR_ROUTE = '/__dom_to_pptx_vendor__/'
 const defaultAssetsDir = resolve(projectRoot, 'assets')
 const knownAssetMirrors = [
   {
@@ -27,7 +32,7 @@ const defaultEmbedFonts = [
   },
 ]
 const DEFAULT_HTML_EXTENSIONS = new Set(['.html', '.htm'])
-const MERGED_HTML_FILE_NAME = '.__html_to_pptx_merged__.html'
+const MERGED_HTML_FILE_NAME = '__html_to_pptx_merged__.html'
 let sharedBrowser = null
 
 function toPosixPath(value) {
@@ -94,6 +99,88 @@ async function fileExists(path) {
   } catch {
     return false
   }
+}
+
+function resolveInside(rootDir, requestedPath) {
+  const target = resolve(rootDir, requestedPath || '')
+  const rel = relative(rootDir, target)
+  if (rel.startsWith('..') || isAbsolute(rel)) return null
+  return target
+}
+
+function rewriteBareModuleImports(source) {
+  const moduleMap = new Map([
+    ['pptxgenjs', `${DOM_TO_PPTX_VENDOR_ROUTE}pptxgenjs.js`],
+    ['html2canvas', `${DOM_TO_PPTX_VENDOR_ROUTE}html2canvas.js`],
+    ['jszip', `${DOM_TO_PPTX_VENDOR_ROUTE}jszip.js`],
+    ['opentype.js', `${DOM_TO_PPTX_VENDOR_ROUTE}opentype.js`],
+    ['fonteditor-core', `${DOM_TO_PPTX_VENDOR_ROUTE}fonteditor-core.js`],
+    ['pako', `${DOM_TO_PPTX_VENDOR_ROUTE}pako.js`],
+  ])
+  return String(source).replace(/(from\s+['"]|import\s*\(\s*['"])([^'"./][^'"]*)(['"])/g, (full, prefix, specifier, suffix) => {
+    return moduleMap.has(specifier) ? `${prefix}${moduleMap.get(specifier)}${suffix}` : full
+  })
+}
+
+async function readLocalDomToPptxModule(modulePath) {
+  const safePath = modulePath || 'index.js'
+  let localPath = resolveInside(domToPptxDir, safePath)
+  if (!localPath) return null
+  if (!(await fileExists(localPath)) && !extname(localPath)) localPath = `${localPath}.js`
+  const rel = relative(domToPptxDir, localPath)
+  if (rel.startsWith('..') || isAbsolute(rel) || !(await fileExists(localPath))) return null
+  return rewriteBareModuleImports(await readFile(localPath, 'utf8'))
+}
+
+async function readLocalPackageModule(packageName, modulePath) {
+  const packageDir = resolve(nodeModulesDir, packageName)
+  const requestedPath = modulePath || ''
+
+  if (packageName === 'fonteditor-core' && /^woff2\/index(?:\.js)?$/.test(requestedPath)) {
+    return 'export default { isInited: () => false, init: async () => {} };\n'
+  }
+
+  let localPath = resolveInside(packageDir, requestedPath)
+  if (!localPath) return null
+  if (!(await fileExists(localPath)) && !extname(localPath)) localPath = `${localPath}.js`
+  const rel = relative(packageDir, localPath)
+  if (rel.startsWith('..') || isAbsolute(rel) || !(await fileExists(localPath))) return null
+  return rewriteBareModuleImports(await readFile(localPath, 'utf8'))
+}
+
+async function readDomToPptxVendorModule(modulePath) {
+  if (modulePath.startsWith('fonteditor-core/')) {
+    return readLocalPackageModule('fonteditor-core', modulePath.slice('fonteditor-core/'.length))
+  }
+
+  switch (modulePath) {
+    case 'pptxgenjs.js': {
+      const source = await readFile(resolve(nodeModulesDir, 'pptxgenjs/dist/pptxgen.bundle.js'), 'utf8')
+      return `${source}\nconst PptxGenJSExport = PptxGenJS;\nexport default PptxGenJSExport;\nexport { PptxGenJSExport as PptxGenJS };\n`
+    }
+    case 'html2canvas.js': {
+      const source = await readFile(resolve(nodeModulesDir, 'html2canvas/dist/html2canvas.min.js'), 'utf8')
+      return `${source}\nconst html2canvasExport = globalThis.html2canvas;\nexport default html2canvasExport;\n`
+    }
+    case 'jszip.js': {
+      const source = await readFile(resolve(nodeModulesDir, 'jszip/dist/jszip.min.js'), 'utf8')
+      return `${source}\nconst JSZipExport = globalThis.JSZip;\nexport default JSZipExport;\n`
+    }
+    case 'opentype.js': {
+      const source = await readFile(resolve(nodeModulesDir, 'opentype.js/dist/opentype.min.js'), 'utf8')
+      return `${source}\nconst opentypeExport = globalThis.opentype?.default ?? globalThis.opentype;\nexport default opentypeExport;\n`
+    }
+    case 'pako.js':
+      return readFile(resolve(nodeModulesDir, 'pako/dist/pako.esm.mjs'), 'utf8')
+    case 'fonteditor-core.js':
+      return `export * from '${DOM_TO_PPTX_VENDOR_ROUTE}fonteditor-core/src/main.esm.js';\nimport fontEditorCoreDefault from '${DOM_TO_PPTX_VENDOR_ROUTE}fonteditor-core/src/main.esm.js';\nexport default fontEditorCoreDefault;\n`
+    default:
+      return null
+  }
+}
+
+export function buildDomToPptxModuleUrl(baseUrl) {
+  return new URL(`${DOM_TO_PPTX_ROUTE}index.js`, baseUrl).toString()
 }
 
 export async function collectHtmlFiles(inputDir, options = {}) {
@@ -193,6 +280,22 @@ export async function startRenderServer(htmlDir, options = {}) {
   const port = options.port || (await getPort({ port: [4173, 5173, 6173] }))
   const app = express()
   app.get('/__health', (_req, res) => res.type('text/plain').send('ok'))
+  app.get(`${DOM_TO_PPTX_ROUTE}:modulePath(*)`, async (req, res) => {
+    const source = await readLocalDomToPptxModule(req.params.modulePath)
+    if (!source) {
+      res.status(404).send('Not found')
+      return
+    }
+    res.type('application/javascript').send(source)
+  })
+  app.get(`${DOM_TO_PPTX_VENDOR_ROUTE}:modulePath(*)`, async (req, res) => {
+    const source = await readDomToPptxVendorModule(req.params.modulePath)
+    if (!source) {
+      res.status(404).send('Not found')
+      return
+    }
+    res.type('application/javascript').send(source)
+  })
   app.get('/__local_asset__/:assetPath', async (req, res) => {
     const assetPath = resolve(defaultAssetsDir, decodeURIComponent(req.params.assetPath))
     const rel = relative(defaultAssetsDir, assetPath)
@@ -389,35 +492,37 @@ async function waitForPageStable(page, selector = '.ppt-slide') {
 }
 
 async function runBrowserExport(page, outputPath, options) {
-  const exportOptions = buildExportOptions({ ...options, fileName: basename(outputPath), skipDownload: false })
+  const { domToPptxModuleUrl, ...exportInputOptions } = options
+  const exportOptions = buildExportOptions({ ...exportInputOptions, fileName: basename(outputPath), skipDownload: false })
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: options.timeout ?? 120_000 }),
     page.evaluate(
-      async ({ script, exportOptions }) => {
-        const { exportToPptx } = await import('https://esm.sh/dom-to-pptx')
+      async ({ script, exportOptions, domToPptxModuleUrl }) => {
+        const { exportToPptx } = await import(domToPptxModuleUrl)
         const targets = eval(script)
         await exportToPptx(targets, exportOptions)
       },
-      { script: collectTargetsScript(), exportOptions },
+      { script: collectTargetsScript(), exportOptions, domToPptxModuleUrl },
     ),
   ])
   await download.saveAs(outputPath)
 }
 
 async function exportMergedPage(page, outputPath, options = {}) {
+  const { domToPptxModuleUrl, ...exportInputOptions } = options
   const exportOptions = buildExportOptions({
-    ...options,
+    ...exportInputOptions,
     fileName: basename(outputPath),
     skipDownload: false,
   })
 
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: options.timeout ?? 120_000 }),
-    page.evaluate(async ({ exportOptions }) => {
-      const { exportToPptx } = await import('https://esm.sh/dom-to-pptx')
+    page.evaluate(async ({ exportOptions, domToPptxModuleUrl }) => {
+      const { exportToPptx } = await import(domToPptxModuleUrl)
       const targets = Array.from(document.querySelectorAll('.ppt-slide'))
       await exportToPptx(targets, exportOptions)
-    }, { exportOptions }),
+    }, { exportOptions, domToPptxModuleUrl }),
   ])
 
   await download.saveAs(outputPath)
@@ -427,6 +532,7 @@ export async function convertHtmlToPptx(input, outputPath, options = {}) {
   const htmlFiles = Array.isArray(input) ? input.map((item) => resolve(item)) : [resolve(input)]
   const htmlDir = options.htmlDir ? resolve(options.htmlDir) : resolveHtmlDirFromInput(htmlFiles)
   const server = await startRenderServer(htmlDir, options.server || {})
+  const domToPptxModuleUrl = options.domToPptxModuleUrl || buildDomToPptxModuleUrl(server.baseUrl)
   const { chromium } = await import('playwright')
   let browser = options.browser || sharedBrowser
   let ownsBrowser = false
@@ -443,7 +549,7 @@ export async function convertHtmlToPptx(input, outputPath, options = {}) {
       const pageUrl = buildRenderPageUrl(server.baseUrl, htmlDir, localizedHtmlPath)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: options.timeout ?? 60_000 })
       await waitForPageStable(page, collectTargetsScript())
-      await runBrowserExport(page, outputPath, options)
+      await runBrowserExport(page, outputPath, { ...options, domToPptxModuleUrl })
       if (localizedHtmlPath !== htmlFile) await removeTemporaryFile(localizedHtmlPath)
     }
     const info = await stat(outputPath)
@@ -466,6 +572,7 @@ export async function convertHtmlDirectoryToPptx(inputDir, outputPath, options =
 
   await mkdir(dirname(output), { recursive: true })
   const server = await startRenderServer(root, options.server || {})
+  const domToPptxModuleUrl = options.domToPptxModuleUrl || buildDomToPptxModuleUrl(server.baseUrl)
   const { chromium } = await import('playwright')
   let browser
   let context
@@ -481,7 +588,7 @@ export async function convertHtmlDirectoryToPptx(inputDir, outputPath, options =
     const mergedUrl = buildRenderPageUrl(server.baseUrl, root, merged.tempPath)
     await page.goto(mergedUrl, { waitUntil: 'domcontentloaded', timeout: options.timeout ?? 60_000 })
     await waitForPageStable(page, '.ppt-slide')
-    await exportMergedPage(page, output, options)
+    await exportMergedPage(page, output, { ...options, domToPptxModuleUrl })
 
     const outputStat = await stat(output)
     return {
