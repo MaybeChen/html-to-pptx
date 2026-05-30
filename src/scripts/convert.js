@@ -293,16 +293,16 @@ export async function startRenderServer(htmlDir, options = {}) {
   const port = options.port || (await getPort({ port: [4173, 5173, 6173] }))
   const app = express()
   app.get('/__health', (_req, res) => res.type('text/plain').send('ok'))
-  app.get(`${DOM_TO_PPTX_ROUTE}:modulePath(*)`, async (req, res) => {
-    const source = await readLocalDomToPptxModule(req.params.modulePath)
+  app.get(/^\/__dom_to_pptx__\/(.+)$/, async (req, res) => {
+    const source = await readLocalDomToPptxModule(req.params[0])
     if (!source) {
       res.status(404).send('Not found')
       return
     }
     res.type('application/javascript').send(source)
   })
-  app.get(`${DOM_TO_PPTX_VENDOR_ROUTE}:modulePath(*)`, async (req, res) => {
-    const source = await readDomToPptxVendorModule(req.params.modulePath)
+  app.get(/^\/__dom_to_pptx_vendor__\/(.+)$/, async (req, res) => {
+    const source = await readDomToPptxVendorModule(req.params[0])
     if (!source) {
       res.status(404).send('Not found')
       return
