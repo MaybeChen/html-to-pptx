@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node src/scripts/convert.js",
-    "test": "node --test"
+    "test": "node --test",
+    "sync:dom-to-pptx": "node src/scripts/sync-dom-to-pptx.js"
   },
   "keywords": [
     "html",
