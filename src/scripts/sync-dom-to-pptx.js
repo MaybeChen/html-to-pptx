@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -32,6 +32,34 @@ export async function fetchDomToPptxSource(fileName, fetchImpl = globalThis.fetc
   return response.text()
 }
 
+export async function readLocalDomToPptxSource(fileName, outputDir = targetDir) {
+  return readFile(resolve(outputDir, fileName), 'utf8')
+}
+
+export async function collectDomToPptxSourceDiffs(options = {}) {
+  const fetchImpl = options.fetch || globalThis.fetch
+  const outputDir = options.outputDir || targetDir
+  const diffs = []
+
+  for (const fileName of DOM_TO_PPTX_UPSTREAM_FILES) {
+    const [remoteSource, localSource] = await Promise.all([
+      fetchDomToPptxSource(fileName, fetchImpl),
+      readLocalDomToPptxSource(fileName, outputDir),
+    ])
+
+    if (localSource !== remoteSource) {
+      diffs.push({
+        fileName,
+        url: buildDomToPptxUpstreamUrl(fileName),
+        localBytes: Buffer.byteLength(localSource),
+        upstreamBytes: Buffer.byteLength(remoteSource),
+      })
+    }
+  }
+
+  return diffs
+}
+
 export async function syncDomToPptxSources(options = {}) {
   const fetchImpl = options.fetch || globalThis.fetch
   const outputDir = options.outputDir || targetDir
@@ -49,6 +77,22 @@ export async function syncDomToPptxSources(options = {}) {
 }
 
 async function main() {
+  if (process.argv.includes('--check')) {
+    const diffs = await collectDomToPptxSourceDiffs()
+    if (diffs.length === 0) {
+      console.log('src/dom-to-pptx matches upstream exactly.')
+      return
+    }
+
+    for (const diff of diffs) {
+      console.error(
+        `${diff.fileName} differs from ${diff.url} ` +
+          `(local ${diff.localBytes} bytes, upstream ${diff.upstreamBytes} bytes)`
+      )
+    }
+    process.exit(1)
+  }
+
   const synced = await syncDomToPptxSources()
   for (const item of synced) {
     console.log(`synced ${item.fileName} <- ${item.url}`)

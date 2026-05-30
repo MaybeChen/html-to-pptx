@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { buildDomToPptxModuleUrl, buildExportOptions, collectHtmlFiles, createMergedHtmlFile, startRenderServer } from '../src/scripts/convert.js';
 import { collectMergedStylesheetHrefs, DEFAULT_FONT_CSS_URLS } from '../src/scripts/merge-html-assets.js';
-import { DOM_TO_PPTX_UPSTREAM_FILES, buildDomToPptxUpstreamUrl } from '../src/scripts/sync-dom-to-pptx.js';
+import { DOM_TO_PPTX_UPSTREAM_FILES, buildDomToPptxUpstreamUrl, collectDomToPptxSourceDiffs } from '../src/scripts/sync-dom-to-pptx.js';
 
 test('buildExportOptions applies defaults', () => {
   assert.deepEqual(buildExportOptions({ skipDownload: true }), {
@@ -130,4 +130,25 @@ test('dom-to-pptx sync script tracks canonical upstream source files', () => {
     buildDomToPptxUpstreamUrl('index.js'),
     'https://raw.githubusercontent.com/atharva9167j/dom-to-pptx/master/src/index.js'
   );
+});
+
+test('dom-to-pptx sync check reports byte-level upstream drift', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
+  try {
+    for (const fileName of DOM_TO_PPTX_UPSTREAM_FILES) {
+      await writeFile(join(dir, fileName), fileName === 'index.js' ? 'local' : 'same');
+    }
+
+    const fetch = async (url) => ({
+      ok: true,
+      text: async () => url.endsWith('/index.js') ? 'remote' : 'same',
+    });
+    const diffs = await collectDomToPptxSourceDiffs({ outputDir: dir, fetch });
+
+    assert.deepEqual(diffs.map((diff) => diff.fileName), ['index.js']);
+    assert.equal(diffs[0].localBytes, 5);
+    assert.equal(diffs[0].upstreamBytes, 6);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
