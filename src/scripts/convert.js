@@ -27,7 +27,7 @@ const defaultEmbedFonts = [
   },
 ]
 const DEFAULT_HTML_EXTENSIONS = new Set(['.html', '.htm'])
-const MERGED_HTML_FILE_NAME = '.__html_to_pptx_merged__.html'
+const MERGED_HTML_FILE_NAME = '__html_to_pptx_merged__.html'
 let sharedBrowser = null
 
 function toPosixPath(value) {
