@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { buildExportOptions, collectHtmlFiles, createMergedHtmlFile } from '../src/scripts/convert.js';
+import { buildExportOptions, collectHtmlFiles, createMergedHtmlFile, startRenderServer } from '../src/scripts/convert.js';
 import { collectMergedStylesheetHrefs, DEFAULT_FONT_CSS_URLS } from '../src/scripts/merge-html-assets.js';
 
 test('buildExportOptions applies defaults', () => {
@@ -59,6 +59,27 @@ test('createMergedHtmlFile wraps each html file as a ppt slide', async () => {
     assert.match(merged, /href="http:\/\/127\.0\.0\.1:4173\/a\.css"/);
     assert.match(merged, new RegExp(DEFAULT_FONT_CSS_URLS[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('merged html file is served by the render server', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
+  let server;
+  try {
+    const first = join(dir, 'a.html');
+    await writeFile(first, '<html><body><h1>A</h1></body></html>');
+
+    server = await startRenderServer(dir);
+    const { tempPath } = await createMergedHtmlFile(dir, [first], server.baseUrl);
+
+    assert.equal(basename(tempPath).startsWith('.'), false);
+
+    const response = await fetch(new URL(basename(tempPath), server.baseUrl));
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /class="ppt-slide"/);
+  } finally {
+    if (server) await server.close().catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
 });
