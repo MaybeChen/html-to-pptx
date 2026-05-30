@@ -64,6 +64,27 @@ test('createMergedHtmlFile wraps each html file as a ppt slide', async () => {
   }
 });
 
+test('createMergedHtmlFile preserves body classes and root colors on slides', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
+  try {
+    const first = join(dir, 'styled.html');
+    await writeFile(
+      first,
+      '<html><head><style>html, body { width: 1920px; height: 1080px; } body { background: #123456; color: rgb(255, 255, 255); }</style></head><body class="theme dark" style="font-family: Arial"><h1>Styled</h1></body></html>'
+    );
+
+    const { tempPath } = await createMergedHtmlFile(dir, [first], 'http://127.0.0.1:4173/');
+    const merged = await readFile(tempPath, 'utf8');
+
+    assert.match(merged, /<section class="ppt-slide theme dark"/);
+    assert.match(merged, /style="font-family: Arial"/);
+    assert.match(merged, /section\.ppt-slide\[data-slide-index="1"\] \{[^}]*background: #123456/);
+    assert.match(merged, /section\.ppt-slide\[data-slide-index="1"\] \{[^}]*color: rgb\(255, 255, 255\)/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('merged html file is served by the render server', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
   let server;

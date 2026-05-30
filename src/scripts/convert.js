@@ -411,6 +411,97 @@ function extractTagAttributes(html, tagName) {
   return match ? match[1].trim() : ''
 }
 
+function parseHtmlAttributes(attributeText = '') {
+  const attrs = []
+  String(attributeText).replace(/([:\w-]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?/g, (_full, name, rawValue) => {
+    let value = ''
+    if (rawValue) value = rawValue.replace(/^['"]|['"]$/g, '')
+    attrs.push({ name, value })
+    return _full
+  })
+  return attrs
+}
+
+function buildSlideAttributes(bodyAttrs = '', extraAttrs = {}) {
+  const classNames = ['ppt-slide']
+  const attrs = [
+    ['data-source', extraAttrs.source],
+    ['data-slide-index', String(extraAttrs.index)],
+  ]
+
+  for (const attr of parseHtmlAttributes(bodyAttrs)) {
+    const lowerName = attr.name.toLowerCase()
+    if (lowerName === 'class') {
+      classNames.push(...attr.value.split(/\s+/).filter(Boolean))
+      continue
+    }
+    if (lowerName === 'data-source' || lowerName === 'data-slide-index') continue
+    attrs.push([attr.name, attr.value])
+  }
+
+  return [
+    ['class', [...new Set(classNames)].join(' ')],
+    ...attrs,
+  ]
+    .map(([name, value]) => value === '' ? name : `${name}="${escapeHtml(value)}"`)
+    .join(' ')
+}
+
+function splitCssDeclarations(cssText = '') {
+  const declarations = []
+  let current = ''
+  let parenDepth = 0
+  let quote = ''
+
+  for (const char of String(cssText)) {
+    if (quote) {
+      current += char
+      if (char === quote) quote = ''
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      current += char
+      continue
+    }
+    if (char === '(') parenDepth++
+    if (char === ')') parenDepth--
+    if (char === ';' && parenDepth === 0) {
+      if (current.trim()) declarations.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+
+  if (current.trim()) declarations.push(current.trim())
+  return declarations
+}
+
+function extractRootCssDeclarations(cssText = '') {
+  const declarations = []
+  String(cssText).replace(/([^{}]+)\{([^{}]*)\}/g, (_full, selectorText, ruleBody) => {
+    const selectors = selectorText
+      .split(',')
+      .map((selector) => selector.trim().toLowerCase())
+      .filter(Boolean)
+    if (selectors.some((selector) => selector === 'html' || selector === 'body' || selector === 'html body')) {
+      declarations.push(...splitCssDeclarations(ruleBody))
+    }
+    return _full
+  })
+  return declarations
+}
+
+function buildSlideRootStyle(item) {
+  const declarations = []
+  declarations.push(...extractRootCssDeclarations(item.inlineStyles.join('\n')))
+  const bodyStyle = parseHtmlAttributes(item.bodyAttrs).find((attr) => attr.name.toLowerCase() === 'style')?.value
+  if (bodyStyle) declarations.push(...splitCssDeclarations(bodyStyle))
+  if (declarations.length === 0) return ''
+  return `\n    section.ppt-slide[data-slide-index="${item.index}"] { ${[...new Set(declarations)].join('; ')}; }`
+}
+
 function stripScripts(html) {
   return String(html).replace(/<script\b[\s\S]*?<\/script>/gi, '')
 }
@@ -446,6 +537,7 @@ export async function createMergedHtmlFile(inputDir, htmlFiles, serverBaseUrl) {
     const bodyAttrs = extractTagAttributes(html, 'body')
 
     items.push({
+      index: items.length + 1,
       sourcePath: htmlFile,
       pageUrl,
       externalLinks: collectExternalStylesheetHrefs(head),
@@ -459,11 +551,11 @@ export async function createMergedHtmlFile(inputDir, htmlFiles, serverBaseUrl) {
     .map((href) => `    <link rel="stylesheet" href="${escapeHtml(href)}">`)
     .join('\n')
   const inlineStyles = items.flatMap((item) => item.inlineStyles).join('\n')
+  const slideRootStyles = items.map(buildSlideRootStyle).join('')
   const slides = items
-    .map((item, index) => {
+    .map((item) => {
       const relativeSource = toPosixPath(relative(inputDir, item.sourcePath))
-      const sourceAttrs = item.bodyAttrs ? ` ${item.bodyAttrs}` : ''
-      return `    <section class="ppt-slide" data-source="${escapeHtml(relativeSource)}" data-slide-index="${index + 1}"${sourceAttrs}>\n${item.bodyHtml}\n    </section>`
+      return `    <section ${buildSlideAttributes(item.bodyAttrs, { source: relativeSource, index: item.index })}>\n${item.bodyHtml}\n    </section>`
     })
     .join('\n')
 
@@ -477,7 +569,7 @@ ${stylesheetLinks}
 ${inlineStyles}
   <style>
     html, body { margin: 0; padding: 0; background: transparent; }
-    .ppt-slide { position: relative; display: block; box-sizing: border-box; overflow: hidden; }
+    .ppt-slide { position: relative; display: block; box-sizing: border-box; overflow: hidden; }${slideRootStyles}
   </style>
 </head>
 <body>
