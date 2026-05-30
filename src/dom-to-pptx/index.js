@@ -1,9 +1,6 @@
 // src/index.js
 import * as PptxGenJSImport from 'pptxgenjs';
 import html2canvas from 'html2canvas';
-import { PPTXEmbedFonts } from './font-embedder.js';
-import { normalizePptxZip } from './pptx-normalizer.js';
-import JSZip from 'jszip';
 
 // Normalize import
 const PptxGenJS = PptxGenJSImport?.default ?? PptxGenJSImport;
@@ -140,7 +137,12 @@ export async function exportToPptx(target, options = {}) {
     // Generate initial PPTX
     const initialBlob = await pptx.write({ outputType: 'blob' });
 
-    // Load into Embedder
+    // Load font embedding dependencies only when fonts are actually embedded.
+    const [{ default: JSZip }, { PPTXEmbedFonts }, { normalizePptxZip }] = await Promise.all([
+      import('jszip'),
+      import('./font-embedder.js'),
+      import('./pptx-normalizer.js'),
+    ]);
     const zip = await JSZip.loadAsync(initialBlob);
     const embedder = new PPTXEmbedFonts();
     await embedder.loadZip(zip);
@@ -176,6 +178,10 @@ export async function exportToPptx(target, options = {}) {
     if (options.skipNormalize === true) {
       finalBlob = initialBlob;
     } else {
+      const [{ default: JSZip }, { normalizePptxZip }] = await Promise.all([
+        import('jszip'),
+        import('./pptx-normalizer.js'),
+      ]);
       const zip = await JSZip.loadAsync(initialBlob);
       await normalizePptxZip(zip);
       finalBlob = await zip.generateAsync({

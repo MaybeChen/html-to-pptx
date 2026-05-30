@@ -9,7 +9,10 @@ import { waitForFontsReady } from './wait-for-fonts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(__dirname, '..')
+const repoRoot = resolve(projectRoot, '..')
 const defaultAssetsDir = resolve(projectRoot, 'assets')
+const domToPptxDir = resolve(projectRoot, 'dom-to-pptx')
+const nodeModulesDir = resolve(repoRoot, 'node_modules')
 const knownAssetMirrors = [
   {
     remotePrefix: 'https://cdn.digitalhumanai.top/slidagent/pptx-craft/assets/',
@@ -193,6 +196,11 @@ export async function startRenderServer(htmlDir, options = {}) {
   const port = options.port || (await getPort({ port: [4173, 5173, 6173] }))
   const app = express()
   app.get('/__health', (_req, res) => res.type('text/plain').send('ok'))
+  app.get('/__dom_to_pptx_deps__/jszip.js', (_req, res) => {
+    res.type('application/javascript').send('const JSZip = window.JSZip;\nif (!JSZip) throw new Error(\'JSZip global is not loaded.\');\nexport default JSZip;\n')
+  })
+  app.use('/__dom_to_pptx__', express.static(domToPptxDir, { fallthrough: false }))
+  app.use('/__node_modules__', express.static(nodeModulesDir, { fallthrough: false }))
   app.get('/__local_asset__/:assetPath', async (req, res) => {
     const assetPath = resolve(defaultAssetsDir, decodeURIComponent(req.params.assetPath))
     const rel = relative(defaultAssetsDir, assetPath)
@@ -388,13 +396,32 @@ async function waitForPageStable(page, selector = '.ppt-slide') {
   })
 }
 
-async function runBrowserExport(page, outputPath, options) {
+function buildBrowserRuntimeImportMap(baseUrl) {
+  const url = (path) => new URL(path, baseUrl).toString()
+  return {
+    imports: {
+      'dom-to-pptx': url('__dom_to_pptx__/index.js'),
+      pptxgenjs: url('__node_modules__/pptxgenjs/dist/pptxgen.es.js'),
+      html2canvas: url('__node_modules__/html2canvas/dist/html2canvas.esm.js'),
+      jszip: url('__dom_to_pptx_deps__/jszip.js'),
+    },
+  }
+}
+
+async function installBrowserExportRuntime(page, baseUrl) {
+  if (await page.evaluate(() => Boolean(window.__htmlToPptxRuntimeInstalled)).catch(() => false)) return
+  await page.addScriptTag({ path: resolve(nodeModulesDir, 'jszip/dist/jszip.min.js') })
+  await page.addScriptTag({ type: 'importmap', content: JSON.stringify(buildBrowserRuntimeImportMap(baseUrl)) })
+  await page.evaluate(() => { window.__htmlToPptxRuntimeInstalled = true })
+}
+
+async function runBrowserExport(page, outputPath, options, baseUrl) {
   const exportOptions = buildExportOptions({ ...options, fileName: basename(outputPath), skipDownload: false })
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: options.timeout ?? 120_000 }),
     page.evaluate(
       async ({ script, exportOptions }) => {
-        const { exportToPptx } = await import('https://esm.sh/dom-to-pptx')
+        const { exportToPptx } = await import('dom-to-pptx')
         const targets = eval(script)
         await exportToPptx(targets, exportOptions)
       },
@@ -404,7 +431,7 @@ async function runBrowserExport(page, outputPath, options) {
   await download.saveAs(outputPath)
 }
 
-async function exportMergedPage(page, outputPath, options = {}) {
+async function exportMergedPage(page, outputPath, options = {}, baseUrl) {
   const exportOptions = buildExportOptions({
     ...options,
     fileName: basename(outputPath),
@@ -414,7 +441,7 @@ async function exportMergedPage(page, outputPath, options = {}) {
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: options.timeout ?? 120_000 }),
     page.evaluate(async ({ exportOptions }) => {
-      const { exportToPptx } = await import('https://esm.sh/dom-to-pptx')
+      const { exportToPptx } = await import('dom-to-pptx')
       const targets = Array.from(document.querySelectorAll('.ppt-slide'))
       await exportToPptx(targets, exportOptions)
     }, { exportOptions }),
@@ -443,7 +470,8 @@ export async function convertHtmlToPptx(input, outputPath, options = {}) {
       const pageUrl = buildRenderPageUrl(server.baseUrl, htmlDir, localizedHtmlPath)
       await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: options.timeout ?? 60_000 })
       await waitForPageStable(page, collectTargetsScript())
-      await runBrowserExport(page, outputPath, options)
+      await installBrowserExportRuntime(page, server.baseUrl)
+      await runBrowserExport(page, outputPath, options, server.baseUrl)
       if (localizedHtmlPath !== htmlFile) await removeTemporaryFile(localizedHtmlPath)
     }
     const info = await stat(outputPath)
@@ -481,7 +509,8 @@ export async function convertHtmlDirectoryToPptx(inputDir, outputPath, options =
     const mergedUrl = buildRenderPageUrl(server.baseUrl, root, merged.tempPath)
     await page.goto(mergedUrl, { waitUntil: 'domcontentloaded', timeout: options.timeout ?? 60_000 })
     await waitForPageStable(page, '.ppt-slide')
-    await exportMergedPage(page, output, options)
+    await installBrowserExportRuntime(page, server.baseUrl)
+    await exportMergedPage(page, output, options, server.baseUrl)
 
     const outputStat = await stat(output)
     return {

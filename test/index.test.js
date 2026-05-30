@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { buildExportOptions, collectHtmlFiles, createMergedHtmlFile } from '../src/scripts/convert.js';
+import { buildExportOptions, collectHtmlFiles, createMergedHtmlFile, startRenderServer } from '../src/scripts/convert.js';
 import { collectMergedStylesheetHrefs, DEFAULT_FONT_CSS_URLS } from '../src/scripts/merge-html-assets.js';
 
 test('buildExportOptions applies defaults', () => {
@@ -59,6 +59,29 @@ test('createMergedHtmlFile wraps each html file as a ppt slide', async () => {
     assert.match(merged, /href="http:\/\/127\.0\.0\.1:4173\/a\.css"/);
     assert.match(merged, new RegExp(DEFAULT_FONT_CSS_URLS[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('startRenderServer exposes local browser runtime modules', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
+  let server;
+  try {
+    server = await startRenderServer(dir);
+    const runtimePaths = [
+      '__dom_to_pptx__/index.js',
+      '__node_modules__/pptxgenjs/dist/pptxgen.es.js',
+      '__node_modules__/html2canvas/dist/html2canvas.esm.js',
+      '__dom_to_pptx_deps__/jszip.js',
+    ];
+
+    for (const runtimePath of runtimePaths) {
+      const response = await fetch(new URL(runtimePath, server.baseUrl));
+      assert.equal(response.status, 200, `${runtimePath} should be served`);
+    }
+  } finally {
+    if (server) await server.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
