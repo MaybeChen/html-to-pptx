@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { buildExportOptions, collectHtmlFiles, createMergedHtmlFile, startRenderServer } from '../src/scripts/convert.js';
+import { buildDomToPptxModuleUrl, buildExportOptions, collectHtmlFiles, createMergedHtmlFile, startRenderServer } from '../src/scripts/convert.js';
 import { collectMergedStylesheetHrefs, DEFAULT_FONT_CSS_URLS } from '../src/scripts/merge-html-assets.js';
 
 test('buildExportOptions applies defaults', () => {
@@ -78,6 +78,24 @@ test('merged html file is served by the render server', async () => {
     const response = await fetch(new URL(basename(tempPath), server.baseUrl));
     assert.equal(response.status, 200);
     assert.match(await response.text(), /class="ppt-slide"/);
+  } finally {
+    if (server) await server.close().catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('render server serves the local dom-to-pptx browser module', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
+  let server;
+  try {
+    server = await startRenderServer(dir);
+    const response = await fetch(buildDomToPptxModuleUrl(server.baseUrl));
+    const source = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(source, /export async function exportToPptx/);
+    assert.doesNotMatch(source, /https:\/\/esm\.sh\/dom-to-pptx/);
+    assert.match(source, /\/__dom_to_pptx_vendor__\/pptxgenjs\.js/);
   } finally {
     if (server) await server.close().catch(() => {});
     await rm(dir, { recursive: true, force: true });
