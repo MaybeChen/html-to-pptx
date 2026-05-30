@@ -101,3 +101,17 @@ test('render server serves the local dom-to-pptx browser module', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('render server does not read vendor directories as files', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'html-to-pptx-'));
+  let server;
+  try {
+    server = await startRenderServer(dir);
+    const response = await fetch(new URL('/__dom_to_pptx_vendor__/fonteditor-core/src/ttf/table', server.baseUrl));
+
+    assert.equal(response.status, 404);
+  } finally {
+    if (server) await server.close().catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -122,13 +122,29 @@ function rewriteBareModuleImports(source) {
   })
 }
 
+async function resolveLocalModuleFile(rootDir, requestedPath) {
+  const safePath = requestedPath || 'index.js'
+  const initialPath = resolveInside(rootDir, safePath)
+  if (!initialPath) return null
+
+  const candidates = [initialPath]
+  if (!extname(initialPath)) {
+    candidates.push(`${initialPath}.js`, join(initialPath, 'index.js'))
+  }
+
+  for (const candidate of candidates) {
+    const rel = relative(rootDir, candidate)
+    if (rel.startsWith('..') || isAbsolute(rel) || !(await fileExists(candidate))) continue
+    const candidateStat = await stat(candidate)
+    if (candidateStat.isFile()) return candidate
+  }
+
+  return null
+}
+
 async function readLocalDomToPptxModule(modulePath) {
-  const safePath = modulePath || 'index.js'
-  let localPath = resolveInside(domToPptxDir, safePath)
+  const localPath = await resolveLocalModuleFile(domToPptxDir, modulePath)
   if (!localPath) return null
-  if (!(await fileExists(localPath)) && !extname(localPath)) localPath = `${localPath}.js`
-  const rel = relative(domToPptxDir, localPath)
-  if (rel.startsWith('..') || isAbsolute(rel) || !(await fileExists(localPath))) return null
   return rewriteBareModuleImports(await readFile(localPath, 'utf8'))
 }
 
@@ -140,11 +156,8 @@ async function readLocalPackageModule(packageName, modulePath) {
     return 'export default { isInited: () => false, init: async () => {} };\n'
   }
 
-  let localPath = resolveInside(packageDir, requestedPath)
+  const localPath = await resolveLocalModuleFile(packageDir, requestedPath)
   if (!localPath) return null
-  if (!(await fileExists(localPath)) && !extname(localPath)) localPath = `${localPath}.js`
-  const rel = relative(packageDir, localPath)
-  if (rel.startsWith('..') || isAbsolute(rel) || !(await fileExists(localPath))) return null
   return rewriteBareModuleImports(await readFile(localPath, 'utf8'))
 }
 
